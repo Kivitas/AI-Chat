@@ -399,9 +399,9 @@ pub async fn generate_provider_reply(
             if provider == ProviderKind::OpenAI {
                 body["max_completion_tokens"] = json!(max_tokens);
                 body["store"] = json!(false);
-                body.as_object_mut()
-                    .expect("provider chat body is an object")
-                    .remove("max_tokens");
+                if let Some(object) = body.as_object_mut() {
+                    object.remove("max_tokens");
+                }
             }
             let response = post_json(provider, provider.endpoint(), headers, body).await?;
             extract_chat_completions_text(provider, &response)
@@ -538,9 +538,9 @@ pub async fn generate_provider_reply_streaming<F: Fn(String)>(
             if provider == ProviderKind::OpenAI {
                 body["max_completion_tokens"] = json!(max_tokens);
                 body["store"] = json!(false);
-                body.as_object_mut()
-                    .expect("provider chat body is an object")
-                    .remove("max_tokens");
+                if let Some(object) = body.as_object_mut() {
+                    object.remove("max_tokens");
+                }
             }
             let mut response = client()
                 .post(provider.endpoint())

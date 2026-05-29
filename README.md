@@ -94,16 +94,9 @@ Repository check:
 npm run validate:repo-files
 ```
 
-## Notes Before Uploading
-
-Do not upload local accounts, API keys, encrypted chats, generated media, model files, runtime binaries, build folders, or `node_modules`.
-
-Large local files to keep out of the repository include `.gguf`, `.safetensors`, `.ckpt`, `.onnx`, `.pt`, `.pth`, `.bin`, `.mp4`, `.webm`, `.exe`, `.dll`, and installer files.
-
 ## More Docs
 
 - Model and performance notes: [Docs/MODELS_AND_PERFORMANCE.md](Docs/MODELS_AND_PERFORMANCE.md)
-- Screenshot notes: [Docs/github-screenshots](Docs/github-screenshots/README.md)
 
 ## License
 
