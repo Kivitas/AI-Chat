@@ -1,0 +1,47 @@
+{
+  "name": "ai-chat",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kivitas/ai-chat.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:frontend",
+    "build:frontend": "tsc -b && vite build",
+    "lint": "eslint .",
+    "tauri:dev": "npm run build:frontend && tauri dev",
+    "tauri:build": "tauri build",
+    "validate:repo-files": "node ./scripts/check-file-sizes.mjs repo",
+    "validate:staged": "node ./scripts/check-file-sizes.mjs staged"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.47",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2.11.1",
+    "@types/node": "^20.19.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}

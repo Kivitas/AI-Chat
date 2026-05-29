@@ -1,0 +1,36 @@
+{
+  "productName": "AI Chat",
+  "version": "0.1.0",
+  "identifier": "io.aichat.portable",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "npm run build:frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AI Chat",
+        "width": 1400,
+        "height": 920,
+        "minWidth": 1040,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

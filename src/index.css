@@ -1,0 +1,117 @@
+/**
+ * index.css - global CSS custom properties and base reset.
+ *
+ * This app is a Tauri desktop app rendered in the platform WebView.
+ *
+ * Font stack: system UI fonts. No web font requests or external CDN.
+ * Chromium ships with Segoe UI (Windows) / system-ui everywhere else.
+ */
+
+:root {
+  font-family: "Geist", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: light;
+
+  /* ── Core palette — light mode ─────────────────────────── */
+  --bg:           #f5f4f1;
+  --surface:      rgba(255, 255, 253, 0.92);
+  --surface-2:    #f9f8f5;
+  --surface-3:    #ffffff;
+  --text:         #111110;
+  --muted:        #6b6a66;
+  --faint:        #9b9a96;
+  --border:       rgba(17, 17, 16, 0.09);
+  --border-strong:rgba(17, 17, 16, 0.18);
+  --accent:       #2f5b56;
+  --accent-light: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-contrast: #ffffff;
+  --danger:       #922b21;
+  --danger-bg:    #fff0ee;
+
+  /* ── Shadows ───────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow:    0 4px 24px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05);
+
+  /* ── Border-radius ─────────────────────────────────────── */
+  --radius:    10px;
+  --radius-sm: 6px;
+  --radius-lg: 16px;
+
+  /* ── Sidebar width ─────────────────────────────────────── */
+  --sidebar-w: 240px;
+
+  /* ── Font scale (user-adjustable in settings) ──────────── */
+  --font-scale: 100%;
+}
+
+/* ── Dark mode ─────────────────────────────────────────── */
+:root[data-mode="dark"] {
+  color-scheme: dark;
+  --bg:           #131312;
+  --surface:      rgba(24, 23, 22, 0.95);
+  --surface-2:    #1c1b1a;
+  --surface-3:    #222120;
+  --text:         #f0eeeb;
+  --muted:        #a09e9a;
+  --faint:        #706e6a;
+  --border:       rgba(240, 238, 235, 0.09);
+  --border-strong:rgba(240, 238, 235, 0.18);
+  --accent-contrast: #0a0f0e;
+  --danger:       #ff8e84;
+  --danger-bg:    rgba(255, 100, 80, 0.1);
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.3);
+  --shadow:       0 4px 24px rgba(0,0,0,0.3);
+  --shadow-lg:    0 16px 48px rgba(0,0,0,0.4);
+}
+
+/* ── Night (OLED) mode ─────────────────────────────────── */
+:root[data-mode="night"] {
+  color-scheme: dark;
+  --bg:           #09090b;
+  --surface:      rgba(13, 13, 15, 0.97);
+  --surface-2:    #111113;
+  --surface-3:    #161618;
+  --text:         #f4f2ef;
+  --muted:        #9a9896;
+  --faint:        #636160;
+  --border:       rgba(244, 242, 239, 0.08);
+  --border-strong:rgba(244, 242, 239, 0.16);
+  --accent-contrast: #060608;
+  --danger:       #ff8e84;
+  --danger-bg:    rgba(255, 100, 80, 0.1);
+  --shadow:       0 4px 24px rgba(0,0,0,0.5);
+  --shadow-lg:    0 16px 48px rgba(0,0,0,0.6);
+}
+
+/* ── Base reset ─────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--font-scale);
+  line-height: 1.5;
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+/* ── Reduced motion ─────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Scrollbars — thin, always visible on Tauri ────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--faint); }

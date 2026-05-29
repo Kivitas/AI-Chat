@@ -1,0 +1,111 @@
+# Dependencies and frontend build output
+node_modules/
+dist/
+dist-ssr/
+coverage/
+
+# Rust and Tauri build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Logs and local environment files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# Built app outputs and native binaries
+AI Chat.exe
+*.exe
+*.dll
+*.lib
+*.pdb
+*.so
+*.dylib
+*.app
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+*.msi
+
+# WebView profile/cache created by the desktop app
+App/WebView2Profile/
+
+# User-supplied model files
+Data/Models/*
+!Data/Models/.gitkeep
+Data/ImageModels/*
+!Data/ImageModels/.gitkeep
+Data/VideoModels/*
+!Data/VideoModels/.gitkeep
+
+# Generated media
+Data/Media/*
+!Data/Media/.gitkeep
+!Data/Media/Images/
+!Data/Media/Files/
+!Data/Media/Videos/
+!Data/Media/Thumbnails/
+!Data/Media/Images/.gitkeep
+!Data/Media/Files/.gitkeep
+!Data/Media/Videos/.gitkeep
+!Data/Media/Thumbnails/.gitkeep
+
+# User content and encrypted app data
+Data/Characters/*
+!Data/Characters/.gitkeep
+Data/Chats/*
+!Data/Chats/.gitkeep
+Data/Profiles/*
+!Data/Profiles/.gitkeep
+Data/Presets/*
+!Data/Presets/.gitkeep
+
+# Local credentials, runtime config, backups, and logs
+Data/Config/Accounts/*
+!Data/Config/Accounts/.gitkeep
+Data/Config/security.json
+Data/Config/app-config.json
+Data/Backups/*
+!Data/Backups/.gitkeep
+Data/Logs/*
+!Data/Logs/.gitkeep
+
+# Large model and media file types
+*.gguf
+*.safetensors
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.bin
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.avi
+
+# Runtime folders are placeholders only. Users add binaries locally.
+Runtimes/**/*
+!Runtimes/**/
+!Runtimes/**/.gitkeep

@@ -1,0 +1,56 @@
+{
+  "appName": "AI Chat",
+  "portable": true,
+  "paths": {
+    "appRoot": "${APP_ROOT}",
+    "dataDir": "${APP_ROOT}/Data",
+    "modelsDir": "${DATA_DIR}/Models",
+    "imageModelsDir": "${DATA_DIR}/ImageModels",
+    "videoModelsDir": "${DATA_DIR}/VideoModels",
+    "charactersDir": "${DATA_DIR}/Characters",
+    "chatsDir": "${DATA_DIR}/Chats",
+    "mediaDir": "${DATA_DIR}/Media",
+    "imagesDir": "${MEDIA_DIR}/Images",
+    "videosDir": "${MEDIA_DIR}/Videos",
+    "thumbnailsDir": "${MEDIA_DIR}/Thumbnails",
+    "configDir": "${DATA_DIR}/Config",
+    "profilesDir": "${DATA_DIR}/Profiles",
+    "presetsDir": "${DATA_DIR}/Presets",
+    "backupsDir": "${DATA_DIR}/Backups",
+    "logsDir": "${DATA_DIR}/Logs",
+    "runtimesDir": "${APP_ROOT}/Runtimes"
+  },
+  "limits": {
+    "maxRepoFileSizeMb": 100
+  },
+  "appearance": {
+    "themeId": "charcoal",
+    "themeGroup": "dark",
+    "smooth": true,
+    "compact": false,
+    "autoScroll": true,
+    "typewriter": true,
+    "showPerformance": true,
+    "wideMessages": false,
+    "technicalMode": false,
+    "scale": 100,
+    "messageStyle": "cards",
+    "sidebarCollapsed": false
+  },
+  "privacy": {
+    "localOnly": true,
+    "telemetry": false,
+    "analytics": false,
+    "cloudSync": false,
+    "remoteProviders": false
+  },
+  "security": {
+    "lockOnStartup": true,
+    "autoLockMinutes": 5
+  },
+  "generation": {
+    "threads": null,
+    "gpuLayers": null,
+    "maxTokens": 2048
+  }
+}
