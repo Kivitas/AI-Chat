@@ -1,8 +1,8 @@
 # Installation
 
-This repository is meant to store source code, docs, placeholder folders, and configuration samples. Do not commit `AI Chat.exe`, model files, runtime binaries, API keys, chats, logs, backups, or generated media.
+This repository is meant to store source code, docs, placeholder folders, and configuration samples. Keep generated app builds, model files, runtime binaries, API keys, chats, logs, backups, and generated media out of normal source commits.
 
-The `.exe` is ignored on purpose. Build it locally from the source, or upload it separately as a GitHub Release asset.
+GitHub can host an `.exe`, but the recommended flow is to upload the built app as a GitHub Release asset instead of committing it into the source tree.
 
 ## Requirements
 
@@ -83,7 +83,8 @@ AI Chat/
 |-- Data/
 |-- Runtimes/
 |-- README.md
-`-- installation.md
+|-- installation.md
+`-- setup.md
 ```
 
 ## Where To Put Models
@@ -114,7 +115,7 @@ Supported model file extensions include:
 .gguf, .safetensors, .ckpt, .onnx, .pt, .pth
 ```
 
-Do not upload model files to GitHub. They are usually too large and are intentionally ignored.
+Do not upload model files to normal source commits. They are usually too large and are intentionally ignored.
 
 ## Where To Put Runtimes
 
@@ -150,7 +151,7 @@ Recognized Windows video runtime name:
 video-runtime.exe
 ```
 
-Runtime binaries should not be committed. Keep only the `.gitkeep` placeholder folders in Git.
+Runtime binaries should not be committed in normal source commits. Keep only the `.gitkeep` placeholder folders in Git.
 
 ## API Keys
 
@@ -199,20 +200,18 @@ In GitHub Desktop:
 
 ## Sharing The EXE
 
-Do not commit the `.exe` into the repository.
-
-Use GitHub Releases instead:
+Use GitHub Releases for the built Windows app:
 
 1. Build the app locally.
-2. Create a zip folder containing `AI Chat.exe`, `App/`, `Data/`, `Runtimes/`, `README.md`, and `installation.md`.
+2. Create a zip folder containing `AI Chat.exe`, `App/`, `Data/`, `Runtimes/`, `README.md`, `installation.md`, and `setup.md`.
 3. Go to the GitHub repository page.
 4. Open `Releases`.
 5. Click `Draft a new release`.
-6. Create a version tag, for example `v0.1.0`.
+6. Create a version tag, for example `v1.0.1`.
 7. Upload the zip file as a release asset.
 8. Publish the release.
 
-The repository stays clean, and users can download the built app from Releases.
+The source repository stays clean, and users can download the built app from Releases.
 
 ## Validation Commands
 

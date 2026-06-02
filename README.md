@@ -96,6 +96,7 @@ npm run validate:repo-files
 
 ## More Docs
 
+- Windows setup guide: [setup.md](setup.md)
 - Installation and release guide: [installation.md](installation.md)
 - Model and performance notes: [Docs/MODELS_AND_PERFORMANCE.md](Docs/MODELS_AND_PERFORMANCE.md)
 

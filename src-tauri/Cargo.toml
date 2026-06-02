@@ -1,6 +1,6 @@
 [package]
 name = "ai-chat"
-version = "0.1.0"
+version = "1.0.1"
 description = "AI Chat - offline, portable, local-first desktop AI"
 license = "GPL-3.0-only"
 repository = "https://github.com/Kivitas/ai-chat"
