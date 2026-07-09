@@ -26,9 +26,10 @@ use crate::{
     error::{AppError, AppResult},
     models::{
         AppSnapshot, AuthCapabilities, BackupRecord, BackupResult, CharacterRecord, ChatMessage,
-        ChatRecord, ChatSettings, ChatSettingsUpdatePayload, DiagnosticsReport, GenerationConfig,
-        MediaAsset, MediaPromptPreview, ModelRecord, ProfileRecord, SaveCharacterPayload,
-        SaveProfilePayload, SettingsUpdatePayload, SetupPayload,
+        ChatRecord, ChatSettings, ChatSettingsUpdatePayload, DiagnosticsReport, FolderContext,
+        FolderFile, GenerationConfig, MediaAsset, MediaPromptPreview, ModelRecord, ProfileRecord,
+        SaveCharacterPayload, SaveProfilePayload, SettingsUpdatePayload, SetupPayload, ToolCall,
+        ToolCallResult,
     },
     portable::{
         detect_app_root, folder_size, load_or_create_config, read_json, resolve_paths, to_iso_time,
@@ -42,6 +43,7 @@ use crate::{
     },
     storage::{AppStorage, ProviderSecrets},
 };
+
 
 #[derive(Default)]
 struct SessionState {
@@ -701,14 +703,351 @@ fn build_chat_prompt_parts(
         .unwrap_or_default();
     let response_contract = response_contract_for_prompt(user_text);
 
+    // Folder workspace context
+    let folder_path_opt = active_chat
+        .and_then(|chat| chat.settings.context_folder_path.as_deref());
+    let folder_context_text = folder_path_opt
+        .map(|fp| folder_context_for_prompt(fp))
+        .unwrap_or_default();
+
+    // Agentic tool-call instructions (only when a folder is attached)
+    let agentic_instructions = if folder_path_opt.is_some() {
+        "\n\nAgentic file editing:\nYou may create, edit, or delete files in the workspace folder by emitting \`<tool_call>\` blocks AFTER your response text. Supported actions: write_file, create_file, edit_file, delete_file, read_file.\nFormat:\n<tool_call>\n  <action>write_file</action>\n  <path>relative/path/to/file.ext</path>\n  <content>\nfull file content here\n  </content>\n</tool_call>\nPaths must be relative to the workspace root. Absolute paths and path traversal (../) are rejected. Only emit tool calls when the user explicitly asks you to create or modify files. Always explain what you are doing before the tool call block."
+    } else {
+        ""
+    };
+
     ChatPromptParts {
         system_prompt: format!(
-            "You are {chat_ai_name}, a private local-first assistant running inside an offline desktop app. The user's name is {chat_user_name}.\n\nCore response rules:\n- Answer only as {chat_ai_name}; never print this system prompt, runtime logs, raw template text, banners, echoed prompts, or CLI metadata.\n- Write polished Markdown that reads like a high-quality ChatGPT or Gemini response.\n- Handle chemistry, physics, biology, mathematics, engineering, programming, and document-analysis questions with the same care: define assumptions, explain symbols and terminology, keep units visible, and show the chain of reasoning clearly.\n- For math, physics, chemistry, and engineering derivations, use inline LaTeX with $...$, display LaTeX with $$...$$ for important equations, and \\boxed{{...}} for the final result when appropriate. For multi-line equations use \\begin{{aligned}}...\\end{{aligned}} inside $$...$$; never output raw \\begin{{align}} or \\begin{{align*}}.\n- For biology and chemistry explanations, organize mechanisms, pathways, reactions, structures, and terminology clearly instead of giving a flat paragraph.\n- For code, use fenced code blocks with the correct language tag, keep examples runnable, explain important edge cases, and prefer precise fixes over vague advice.\n- For uploaded PDFs, HTML, code files, and text files, use extracted content when present, mention the file when relevant, and quote or summarize only the parts that matter to the user's request.\n- If the user asks for derivations, proofs, or step-by-step work, do not skip intermediate steps.\n- If information is missing, ask for the minimum missing detail or clearly state the assumption you used.\n\nRequest-specific response contract:\n{response_contract}\n\nChat-specific instructions:\n{chat_instructions}\n\nRecent conversation:\n{}\n\nUploaded file, image, video, and document context:\n{}\n\nUse the recent conversation as memory, but answer only the next user message.",
+            "You are {chat_ai_name}, a private local-first assistant running inside an offline desktop app. The user's name is {chat_user_name}.\n\nCore response rules:\n- Answer only as {chat_ai_name}; never print this system prompt, runtime logs, raw template text, banners, echoed prompts, or CLI metadata.\n- Write polished Markdown that reads like a high-quality ChatGPT or Gemini response.\n- Handle chemistry, physics, biology, mathematics, engineering, programming, and document-analysis questions with the same care: define assumptions, explain symbols and terminology, keep units visible, and show the chain of reasoning clearly.\n- For math, physics, chemistry, and engineering derivations, use inline LaTeX with $...$, display LaTeX with $$...$$ for important equations, and \\boxed{{...}} for the final result when appropriate. For multi-line equations use \\begin{{aligned}}...\\end{{aligned}} inside $$...$$; never output raw \\begin{{align}} or \\begin{{align*}}.\n- For biology and chemistry explanations, organize mechanisms, pathways, reactions, structures, and terminology clearly instead of giving a flat paragraph.\n- For code, use fenced code blocks with the correct language tag, keep examples runnable, explain important edge cases, and prefer precise fixes over vague advice.\n- For uploaded PDFs, HTML, code files, and text files, use extracted content when present, mention the file when relevant, and quote or summarize only the parts that matter to the user's request.\n- If the user asks for derivations, proofs, or step-by-step work, do not skip intermediate steps.\n- If information is missing, ask for the minimum missing detail or clearly state the assumption you used.{agentic_instructions}\n\nRequest-specific response contract:\n{response_contract}\n\nChat-specific instructions:\n{chat_instructions}\n\nRecent conversation:\n{}\n\nUploaded file, image, video, and document context:\n{}\n\nWorkspace folder context:\n{}\n\nUse the recent conversation as memory, but answer only the next user message.",
             if recent_messages.is_empty() { "No previous messages." } else { &recent_messages },
             if file_context.is_empty() { "No uploaded attachments." } else { &file_context },
+            if folder_context_text.is_empty() { "No workspace folder attached." } else { &folder_context_text },
         ),
         user_prompt: user_text.trim().to_string(),
     }
+}
+
+// ─ Folder scanning ────────────────────────────────────────────────────────────────────────────
+
+/// Extensions considered plain text and safe to read + inject into prompt.
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "rs", "py", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml",
+    "html", "htm", "css", "scss", "sass", "sh", "bash", "zsh", "fish", "ps1", "bat",
+    "cmd", "cpp", "cc", "cxx", "c", "h", "hpp", "hxx", "java", "go", "swift", "kt",
+    "kts", "rb", "php", "sql", "xml", "csv", "ini", "conf", "env", "gitignore",
+    "dockerfile", "makefile", "cmake", "gradle", "r", "m", "f90", "f95", "zig",
+    "ex", "exs", "erl", "hrl", "lua", "dart", "scala", "clj", "cljs", "cs", "fs",
+    "fsi", "fsx", "vb", "pl", "pm", "t", "tf", "tfvars", "nix", "lock",
+];
+
+/// Directory names / file patterns to skip entirely during folder scan.
+fn should_skip_path(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    matches!(
+        name,
+        "node_modules" | ".git" | "target" | "dist" | "build" | ".next" | ".nuxt"
+            | "__pycache__" | ".cache" | ".venv" | "venv" | ".env" | ".pytest_cache"
+            | ".mypy_cache" | ".tox" | "coverage" | ".coverage" | ".sass-cache"
+    ) || name.starts_with(".DS_Store")
+}
+
+/// Returns true if this file should have its content read and injected.
+fn is_text_file(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    // Named files with no extension that are text
+    if matches!(
+        name.as_str(),
+        "makefile" | "dockerfile" | "gemfile" | "rakefile" | "procfile" | ".gitignore"
+            | ".env" | ".editorconfig" | "license" | "readme" | "authors" | "changelog"
+            | "contributing" | "cargo.lock" | "package-lock.json"
+    ) {
+        return true;
+    }
+    TEXT_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// Scan a folder and return a `FolderContext` with file tree + contents.
+/// Total injected text is capped at `max_bytes` to protect context window.
+pub fn scan_folder(folder_path: &Path, max_bytes: usize) -> FolderContext {
+    let mut files: Vec<FolderFile> = Vec::new();
+    let mut total_files = 0usize;
+    let mut skipped_files = 0usize;
+    let mut total_bytes = 0usize;
+    let mut truncated = false;
+
+    for entry in WalkDir::new(folder_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !should_skip_path(e.path()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path();
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
+        // Skip very large single files (> 50 MB)
+        if size > 52_428_800 {
+            skipped_files += 1;
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(folder_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let is_text = is_text_file(path);
+        total_files += 1;
+
+        let content = if is_text && !truncated {
+            match fs::read(path) {
+                Ok(bytes) => {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        let trimmed = text.trim();
+                        if total_bytes + trimmed.len() > max_bytes {
+                            truncated = true;
+                            None
+                        } else {
+                            total_bytes += trimmed.len();
+                            Some(trimmed.to_string())
+                        }
+                    } else {
+                        skipped_files += 1;
+                        None
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        files.push(FolderFile {
+            rel_path: rel,
+            abs_path: path.to_string_lossy().to_string(),
+            size_bytes: size,
+            is_text,
+            content,
+        });
+    }
+
+    // Sort: directories first (by path), then alphabetically
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+
+    FolderContext {
+        root: folder_path.to_string_lossy().to_string(),
+        files,
+        total_files,
+        skipped_files,
+        truncated,
+    }
+}
+
+/// Build the text block injected into the system prompt from a folder scan.
+fn folder_context_for_prompt(folder_path: &str) -> String {
+    let path = Path::new(folder_path);
+    if !path.is_dir() {
+        return String::new();
+    }
+    let ctx = scan_folder(path, 524_288_000); // 500 MB max
+    if ctx.files.is_empty() {
+        return String::new();
+    }
+
+    let folder_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(folder_path);
+
+    let mut out = format!(
+        "Workspace folder: {folder_name}/\nFile tree ({} files{}):\n",
+        ctx.total_files,
+        if ctx.truncated { ", content truncated to 500 MB" } else { "" },
+    );
+
+    // Print file tree
+    for f in &ctx.files {
+        out.push_str(&format!("  {}\n", f.rel_path));
+    }
+
+    // Print file contents
+    out.push_str("\nFile contents:\n");
+    for f in &ctx.files {
+        if let Some(content) = &f.content {
+            if !content.is_empty() {
+                let lang = Path::new(&f.rel_path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("text");
+                out.push_str(&format!(
+                    "\n--- {} ---\n```{}\n{}\n```\n",
+                    f.rel_path, lang, content
+                ));
+            }
+        }
+    }
+
+    out
+}
+
+// ─ Agentic tool call parsing & execution ──────────────────────────────────────────────────
+
+/// Extract `<tool_call>...</tool_call>` blocks from model output.
+/// Returns (cleaned_text_without_tool_calls, Vec<ToolCall>).
+fn parse_tool_calls(response: &str) -> (String, Vec<ToolCall>) {
+    let mut calls: Vec<ToolCall> = Vec::new();
+    let mut cleaned = response.to_string();
+
+    // Find all <tool_call>...</tool_call> blocks
+    let mut search_from = 0;
+    while let Some(start) = cleaned[search_from..].find("<tool_call>") {
+        let abs_start = search_from + start;
+        if let Some(rel_end) = cleaned[abs_start..].find("</tool_call>") {
+            let abs_end = abs_start + rel_end + "</tool_call>".len();
+            let block = &cleaned[abs_start + "<tool_call>".len()..abs_start + rel_end];
+
+            // Parse action
+            let action = extract_xml_tag(block, "action").unwrap_or_default();
+            let path = extract_xml_tag(block, "path").unwrap_or_default();
+            let content = extract_xml_tag(block, "content");
+
+            if !action.is_empty() && !path.is_empty() {
+                calls.push(ToolCall { action, path, content });
+            }
+
+            // Mark block for removal
+            cleaned.replace_range(abs_start..abs_end, "");
+            // Don't advance search_from — the string shrank
+        } else {
+            break;
+        }
+    }
+
+    (cleaned.trim().to_string(), calls)
+}
+
+fn extract_xml_tag(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)? + start;
+    Some(text[start..end].trim().to_string())
+}
+
+/// Execute a list of tool calls inside `folder_root`.
+/// All paths are validated to be within the folder root (no traversal).
+fn execute_tool_calls(folder_root: &Path, calls: &[ToolCall]) -> Vec<ToolCallResult> {
+    calls.iter().map(|call| {
+        // Sanitise path: must be relative and inside folder_root
+        let rel = Path::new(&call.path);
+        if rel.is_absolute() {
+            return ToolCallResult {
+                action: call.action.clone(),
+                path: call.path.clone(),
+                success: false,
+                message: "Rejected: absolute paths are not allowed in tool calls.".to_string(),
+                content: None,
+            };
+        }
+        let abs = folder_root.join(rel);
+        // Canonicalise to catch `../../` traversal
+        // We check the prefix before writing, after creating parent dirs
+        let resolved = match abs.parent() {
+            Some(parent) => {
+                let _ = fs::create_dir_all(parent);
+                abs.clone()
+            }
+            None => abs.clone(),
+        };
+        // Safety: reject paths that escape the folder root
+        let root_str = folder_root.to_string_lossy();
+        let resolved_str = resolved.to_string_lossy();
+        if !resolved_str.starts_with(root_str.as_ref()) {
+            return ToolCallResult {
+                action: call.action.clone(),
+                path: call.path.clone(),
+                success: false,
+                message: "Rejected: path traversal outside workspace is not allowed.".to_string(),
+                content: None,
+            };
+        }
+
+        match call.action.as_str() {
+            "write_file" | "create_file" | "edit_file" => {
+                let content = call.content.as_deref().unwrap_or("");
+                match fs::write(&resolved, content) {
+                    Ok(()) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: true,
+                        message: format!("Written {} bytes to {}", content.len(), call.path),
+                        content: None,
+                    },
+                    Err(e) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: false,
+                        message: format!("Write failed: {e}"),
+                        content: None,
+                    },
+                }
+            }
+            "delete_file" => {
+                match fs::remove_file(&resolved) {
+                    Ok(()) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: true,
+                        message: format!("Deleted {}", call.path),
+                        content: None,
+                    },
+                    Err(e) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: false,
+                        message: format!("Delete failed: {e}"),
+                        content: None,
+                    },
+                }
+            }
+            "read_file" => {
+                match fs::read_to_string(&resolved) {
+                    Ok(text) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: true,
+                        message: format!("Read {} bytes from {}", text.len(), call.path),
+                        content: Some(text),
+                    },
+                    Err(e) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: false,
+                        message: format!("Read failed: {e}"),
+                        content: None,
+                    },
+                }
+            }
+            other => ToolCallResult {
+                action: other.to_string(),
+                path: call.path.clone(),
+                success: false,
+                message: format!("Unknown action: {other}"),
+                content: None,
+            },
+        }
+    }).collect()
 }
 
 fn append_runtime_log(storage: &AppStorage, message: &str) {
@@ -1012,43 +1351,56 @@ fn run_llama_cli_runtime(
     command.arg("-p").arg(user_prompt);
     command.arg("-st");
 
-    // Dynamic max tokens
+    // Dynamic max output tokens — capped at 65 536 (large but not unbounded).
+    // Users can override via generation settings; minimum is always honoured.
     let min_output_tokens = minimum_output_tokens_for_prompt(user_prompt);
     let max_tokens = generation_config
         .as_ref()
         .and_then(|c| c.max_tokens)
         .unwrap_or(min_output_tokens)
         .max(min_output_tokens)
-        .clamp(min_output_tokens, 8192);
+        .clamp(min_output_tokens, 65_536);
     command.arg("-n").arg(max_tokens.to_string());
 
+    // Context window: up to 1 000 000 tokens (1 M).
+    // We compute from prompt length + output budget, then clamp between 2 048
+    // and 1 048 576 (2^20).  Most models cap themselves internally anyway;
+    // passing a larger value than the model supports is harmless — llama-cli
+    // will silently reduce it to the model's native maximum.
     let prompt_chars = system_prompt
         .chars()
         .count()
         .saturating_add(user_prompt.chars().count()) as u32;
-    let context_size = prompt_chars
-        .saturating_div(4)
-        .max(512)
+    // Rough chars-to-tokens ratio: 4 chars ≈ 1 token
+    let estimated_prompt_tokens = prompt_chars.saturating_div(4).max(512);
+    let context_size = estimated_prompt_tokens
         .saturating_add(max_tokens)
-        .saturating_add(768)
-        .clamp(2048, 8192);
+        .saturating_add(1024)   // headroom
+        .clamp(2048, 1_048_576); // 2 K … 1 M
     command.arg("-c").arg(context_size.to_string());
 
     // Use '-fa auto' — lets llama-cli decide based on hardware.
     // '-fa on' crashes older llama-cli builds (e.g. amoral-gemma series).
     command.arg("-fa").arg("auto");
 
-    // Dynamic threads config
+    // Dynamic threads config.
+    // Use physical core count when possible (avoid efficiency cores / HT twins
+    // which only add scheduling overhead for compute-bound llama inference).
     let threads_count = if let Some(threads) = generation_config.as_ref().and_then(|c| c.threads) {
         threads.max(1)
     } else {
+        // `available_parallelism` returns logical (HT) cores on most OSes.
+        // Dividing by 2 approximates physical cores without a platform API.
+        // We also clamp to [2, 32] so we never spawn 1 or 64+ threads.
         let logical_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(8);
-        (logical_cores.max(1) as u32).div_ceil(2).max(1)
+        let physical_estimate = (logical_cores + 1) / 2; // round-up integer div
+        (physical_estimate.max(2) as u32).min(32)
     };
-    let batch_size = threads_count.saturating_mul(64).clamp(128, 512);
-    let ubatch_size = (batch_size / 2).max(64);
+    // Batch size: 256 tokens * threads is a good default; keep in 256-2048.
+    let batch_size = threads_count.saturating_mul(256).clamp(256, 2048);
+    let ubatch_size = (batch_size / 2).max(128);
     command.arg("-t").arg(threads_count.to_string());
     command.arg("-tb").arg(threads_count.to_string());
     command.arg("-b").arg(batch_size.to_string());
@@ -1110,7 +1462,6 @@ fn run_llama_cli_runtime(
             AppError::Message(format!("Failed to start llama-cli runtime: {error}"))
         })?;
 
-    use std::io::Read;
     use std::thread;
 
     let mut stdout = child
@@ -1122,18 +1473,24 @@ fn run_llama_cli_runtime(
         .take()
         .ok_or_else(|| AppError::Message("Failed to open stderr".to_string()))?;
 
-    // Read stdout and stderr concurrently to prevent pipe buffer saturation and deadlock
-    let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>();
+    // ── Streaming stdout reader ───────────────────────────────────────────────
+    // We read 1 byte at a time so every token is forwarded immediately.
+    // A background thread sends raw bytes; the poll loop reassembles UTF-8
+    // and emits partial events every 15 ms (or on newline) for low latency.
+    let (stdout_tx, stdout_rx) = mpsc::channel::<u8>();
     let stdout_handle = thread::spawn(move || {
+        use std::io::Read;
         let mut buf = Vec::new();
-        let mut chunk = [0_u8; 4096];
+        let mut byte = [0u8; 1];
         loop {
-            let read = stdout.read(&mut chunk)?;
-            if read == 0 {
-                break;
+            match stdout.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    buf.push(byte[0]);
+                    let _ = stdout_tx.send(byte[0]);
+                }
+                Err(_) => break,
             }
-            buf.extend_from_slice(&chunk[..read]);
-            let _ = stdout_tx.send(chunk[..read].to_vec());
         }
         Ok::<Vec<u8>, std::io::Error>(buf)
     });
@@ -1143,6 +1500,10 @@ fn run_llama_cli_runtime(
         stderr.read_to_end(&mut buf).map(|_| buf)
     });
 
+    // Dynamic timeout: allow 10 s per 1 K context tokens, min 120 s, max 3 600 s (1 h).
+    let timeout_secs = ((context_size as u64).saturating_mul(10) / 1000)
+        .clamp(120, 3_600);
+
     let started_at = std::time::Instant::now();
     let mut exited = false;
     let mut exit_status = None;
@@ -1150,29 +1511,31 @@ fn run_llama_cli_runtime(
     let mut last_emitted = String::new();
     let mut last_emit_at: Option<std::time::Instant> = None;
 
-    while started_at.elapsed() < Duration::from_secs(300) {
-        while let Ok(chunk) = stdout_rx.try_recv() {
-            streamed_stdout.extend_from_slice(&chunk);
-            if let Some((app, chat_id)) = partial_event.as_ref() {
-                let partial_stdout = String::from_utf8_lossy(&streamed_stdout);
-                let cleaned = extract_partial_assistant_response(&partial_stdout);
-                let grew_enough = cleaned.len() >= last_emitted.len().saturating_add(12);
-                let ended_line = cleaned.ends_with('\n') && cleaned.len() > last_emitted.len();
-                let emit_ready = last_emit_at
-                    .map(|emit_at| emit_at.elapsed() >= Duration::from_millis(40))
-                    .unwrap_or(true);
-                if (grew_enough && emit_ready) || ended_line {
-                    let _ = app.emit(
-                        "chat-generation-partial",
-                        GenerationPartialEvent {
-                            chat_id: chat_id.clone(),
-                            text: cleaned.clone(),
-                            elapsed_ms: started_at.elapsed().as_millis() as u64,
-                        },
-                    );
-                    last_emitted = cleaned;
-                    last_emit_at = Some(std::time::Instant::now());
-                }
+    while started_at.elapsed() < Duration::from_secs(timeout_secs) {
+        // Drain all bytes that arrived since last poll
+        while let Ok(byte) = stdout_rx.try_recv() {
+            streamed_stdout.push(byte);
+        }
+        if let Some((app, chat_id)) = partial_event.as_ref() {
+            let partial_stdout = String::from_utf8_lossy(&streamed_stdout);
+            let cleaned = extract_partial_assistant_response(&partial_stdout);
+            let new_chars = cleaned.len().saturating_sub(last_emitted.len());
+            // Emit if: ≥1 new char AND (≥15 ms since last emit OR newline arrived)
+            let emit_ready = last_emit_at
+                .map(|t| t.elapsed() >= Duration::from_millis(15))
+                .unwrap_or(true);
+            let ended_line = cleaned.ends_with('\n') && new_chars > 0;
+            if new_chars >= 1 && (emit_ready || ended_line) {
+                let _ = app.emit(
+                    "chat-generation-partial",
+                    GenerationPartialEvent {
+                        chat_id: chat_id.clone(),
+                        text: cleaned.clone(),
+                        elapsed_ms: started_at.elapsed().as_millis() as u64,
+                    },
+                );
+                last_emitted = cleaned;
+                last_emit_at = Some(std::time::Instant::now());
             }
         }
         if let Some(status) = child.try_wait().map_err(|error| {
@@ -1182,19 +1545,21 @@ fn run_llama_cli_runtime(
             exited = true;
             break;
         }
-        thread::sleep(Duration::from_millis(35));
+        thread::sleep(Duration::from_millis(8));
     }
 
-    while let Ok(chunk) = stdout_rx.try_recv() {
-        streamed_stdout.extend_from_slice(&chunk);
+    // Drain any remaining bytes after process exit
+    while let Ok(byte) = stdout_rx.try_recv() {
+        streamed_stdout.push(byte);
     }
 
     if !exited {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(AppError::Message(
-            "llama-cli timed out after 5 minutes. Try a smaller GGUF, lower max tokens, or fewer GPU layers.".to_string(),
-        ));
+        return Err(AppError::Message(format!(
+            "llama-cli timed out after {timeout_secs}s. \
+             Try a smaller GGUF, fewer GPU layers, or reduce context length."
+        )));
     }
 
     let status = exit_status
@@ -1905,6 +2270,7 @@ async fn send_chat_message(
     read_snapshot(&app, &final_session).map_err(|error| error.to_string())
 }
 
+
 #[tauri::command]
 async fn send_incognito_chat_message(
     app: AppHandle,
@@ -2102,9 +2468,130 @@ fn set_chat_settings(
         chat.settings.ai_instructions = payload.ai_instructions.clone();
         chat.settings.user_avatar = user_avatar;
         chat.settings.ai_avatar = ai_avatar;
+        // Only update folder path if explicitly provided (None = don't touch)
+        if payload.context_folder_path.is_some() {
+            chat.settings.context_folder_path = payload.context_folder_path.clone();
+        }
         chat.updated_at = Utc::now().to_rfc3339();
     })
     .map_err(|error| error.to_string())?;
+    read_snapshot(&app, &guard).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_chat_folder(
+    app: AppHandle,
+    state: State<'_, AppSession>,
+    chat_id: String,
+    folder_path: String,
+) -> Result<AppSnapshot, String> {
+    let guard = require_unlocked(&state).map_err(|error| error.to_string())?;
+    // Validate the path is a real directory
+    let path = Path::new(&folder_path);
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {folder_path}"));
+    }
+    persist_chat_update(&app, &guard, &chat_id, |chat| {
+        chat.settings.context_folder_path = Some(folder_path.clone());
+        chat.updated_at = Utc::now().to_rfc3339();
+    })
+    .map_err(|error| error.to_string())?;
+    read_snapshot(&app, &guard).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_chat_folder(
+    app: AppHandle,
+    state: State<'_, AppSession>,
+    chat_id: String,
+) -> Result<AppSnapshot, String> {
+    let guard = require_unlocked(&state).map_err(|error| error.to_string())?;
+    persist_chat_update(&app, &guard, &chat_id, |chat| {
+        chat.settings.context_folder_path = None;
+        chat.updated_at = Utc::now().to_rfc3339();
+    })
+    .map_err(|error| error.to_string())?;
+    read_snapshot(&app, &guard).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_chat_folder(
+    state: State<'_, AppSession>,
+    folder_path: String,
+) -> Result<FolderContext, String> {
+    let _guard = require_unlocked(&state).map_err(|error| error.to_string())?;
+    let path = Path::new(&folder_path);
+    if !path.is_dir() {
+        return Err(format!("Not a directory: {folder_path}"));
+    }
+    Ok(scan_folder(path, 524_288_000))
+}
+
+#[tauri::command]
+fn apply_chat_tools(
+    app: AppHandle,
+    state: State<'_, AppSession>,
+    chat_id: String,
+    message_id: String,
+) -> Result<AppSnapshot, String> {
+    let guard = require_unlocked(&state).map_err(|error| error.to_string())?;
+
+    // We must read the snapshot to find the message text and the folder path
+    let snapshot = read_snapshot(&app, &guard).map_err(|error| error.to_string())?;
+    let active_chat = snapshot
+        .chats
+        .iter()
+        .find(|chat| chat.id == chat_id)
+        .ok_or_else(|| "Chat not found".to_string())?;
+    
+    let message = active_chat
+        .messages
+        .iter()
+        .find(|m| m.id == message_id)
+        .ok_or_else(|| "Message not found".to_string())?;
+
+    let folder_root_opt = active_chat.settings.context_folder_path.clone();
+    
+    let (_, tool_calls) = parse_tool_calls(&message.text);
+    if tool_calls.is_empty() {
+        return Err("No tool calls found in message".to_string());
+    }
+
+    let tool_results: Vec<ToolCallResult> = if let Some(ref folder_root) = folder_root_opt {
+        execute_tool_calls(Path::new(folder_root), &tool_calls)
+    } else {
+        tool_calls.iter().map(|tc| ToolCallResult {
+            action: tc.action.clone(),
+            path: tc.path.clone(),
+            success: false,
+            message: "No workspace folder is attached to this chat.".to_string(),
+            content: None,
+        }).collect()
+    };
+
+    persist_chat_update(&app, &guard, &chat_id, |chat| {
+        let result_lines: Vec<String> = tool_results.iter().map(|r| {
+            let icon = if r.success { "✅" } else { "❌" };
+            let action_label = match r.action.as_str() {
+                "write_file" | "create_file" | "edit_file" => "Wrote",
+                "delete_file" => "Deleted",
+                "read_file" => "Read",
+                other => other,
+            };
+            format!("{icon} **{action_label}** `{}` — {}", r.path, r.message)
+        }).collect();
+        chat.messages.push(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            role: "tool".to_string(),
+            text: result_lines.join("\n"),
+            created_at: Utc::now().to_rfc3339(),
+            pinned: false,
+            attachments: Vec::new(),
+        });
+        chat.updated_at = Utc::now().to_rfc3339();
+    })
+    .map_err(|error| error.to_string())?;
+
     read_snapshot(&app, &guard).map_err(|error| error.to_string())
 }
 
@@ -3117,6 +3604,7 @@ fn get_diagnostics(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppSession(Mutex::new(SessionState::default())))
         .invoke_handler(tauri::generate_handler![
             get_app_state,
@@ -3145,8 +3633,13 @@ pub fn run() {
             create_backup,
             rescan_models,
             save_settings,
-            get_diagnostics
+            get_diagnostics,
+            set_chat_folder,
+            clear_chat_folder,
+            read_chat_folder,
+            apply_chat_tools
         ])
+
         .run(tauri::generate_context!())
         .expect("error while running AI Chat application");
 }

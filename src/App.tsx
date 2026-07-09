@@ -1,18 +1,24 @@
 import {
   Archive, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, KeyRound,
-  FileUp, Film, Image, Lock, MessageSquare,
+  FileUp, Film, Image, Lock, MessageSquare, FolderInput,
   Moon, Palette, PanelLeftClose, Paperclip,
   Pin, Plus, RefreshCw, Search, Send, Settings,
   ShieldOff, Sliders, Sparkles, Star, Sun,
-  Trash2, UserPlus, Wrench, X,
+  Trash2, UserPlus, Wrench, X, CheckCircle
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import "./App.css";
 import { MessageRenderer } from "./MessageRenderer";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { backend } from "./lib/backend";
-import type { AppSnapshot, BackupRecord, ChatMessage, ChatSettingsUpdatePayload, DiagnosticsReport, MediaAsset, ModelRecord, PathConfig, ProviderStatus, ViewId } from "./types";
+import type {
+  AppSnapshot, BackupRecord, ChatMessage, ChatSettingsUpdatePayload,
+  DiagnosticsReport, MediaAsset, ModelRecord, PathConfig, ProviderStatus,
+  ViewId
+} from "./types";
 
 type ThemeVar =
   | "--bg"
@@ -35,7 +41,7 @@ type Theme = {
   accent: string;
   vars?: Partial<Record<ThemeVar, string>>;
 };
-type ThemeGroup = "all" | Theme["mode"];
+
 type GenerationPartialEvent = { chatId: string; text: string; elapsedMs: number };
 type MediaGenerationProgressEvent = { chatId: string; kind: MediaAsset["kind"]; provider: string; status: string; progress?: number | null; elapsedMs: number };
 type GenerationStats = { chatId: string; elapsedMs: number; outputTokens: number; tps: number };
@@ -871,6 +877,7 @@ export default function App() {
   const [lastStats, setLastStats] = useState<GenerationStats | null>(null);
   const [generationHistory, setGenerationHistory] = useState<GenerationStats[]>([]);
   const [incognitoMessages, setIncognitoMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
 
   // settings
   const [pathsDraft, setPathsDraft] = useState<PathConfig | null>(null);
@@ -893,7 +900,7 @@ export default function App() {
   const [scale, setScale]         = useState(DEFAULT_APPEARANCE.scale);
   const [msgStyle, setMsgStyle]   = useState<AppearanceSettings["messageStyle"]>(DEFAULT_APPEARANCE.messageStyle);
   const [collapsed, setCollapsed] = useState(DEFAULT_APPEARANCE.sidebarCollapsed);
-  const [themeGroup, setThemeGroup] = useState<ThemeGroup>(DEFAULT_APPEARANCE.themeGroup);
+  const [themeGroup, setThemeGroup] = useState<"all" | "light" | "dark" | "night">(DEFAULT_APPEARANCE.themeGroup);
   const [profileDraft, setProfileDraft] = useState({ displayName: "", avatarBase64: null as string | null });
   const [characterDraft, setCharacterDraft] = useState({ name: "", description: "", styleNotes: "", avatarBase64: null as string | null });
   const [backups, setBackups] = useState<BackupRecord[]>([]);
@@ -1285,9 +1292,64 @@ export default function App() {
     }
   }
 
+  async function handleApplyTools(chatId: string, messageId: string) {
+    setBusy(true);
+    try {
+      setSnap(await backend.applyChatTools(chatId, messageId));
+      setToast("Tools applied successfully");
+    } catch (e) {
+      setToast(err(e, "Failed to apply tools"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attachFolder() {
+    if (!activeChat) return;
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Select Workspace Folder",
+      });
+      if (selected && typeof selected === "string") {
+        setBusy(true);
+        try {
+          const nextSnap = await backend.setChatFolder(activeChat.id, selected);
+          setSnap(nextSnap);
+          setShowWorkspacePanel(true);
+          setToast("Workspace attached");
+        } catch (e) {
+          setToast(err(e, "Failed to attach folder"));
+        } finally {
+          setBusy(false);
+        }
+      }
+    } catch (e) {
+      setToast(err(e, "Failed to open dialog"));
+    }
+  }
+
   async function send() {
-    if (!snap || !activeChat || !text.trim() || generating[activeChat.id]) return;
-    const msg = text.trim(); const chatId = activeChat.id; const now = new Date().toISOString();
+    if (!snap || !text.trim()) return;
+
+    // ── Auto-create a chat when typing from the empty state ───────────────────
+    // If there is no active chat yet (first launch, or all chats closed),
+    // create one implicitly so the message is persisted immediately.
+    let resolvedChat = activeChat;
+    if (!resolvedChat) {
+      try {
+        const next = await backend.createChat("New chat");
+        setSnap(next);
+        resolvedChat = next.chats.find(c => c.id === next.activeChatId) ?? next.chats[0] ?? null;
+      } catch (e) {
+        setToast("Could not create chat: " + err(e));
+        return;
+      }
+    }
+    if (!resolvedChat || generating[resolvedChat.id]) return;
+
+    const msg = text.trim(); const chatId = resolvedChat.id; const now = new Date().toISOString();
     const pu: ChatMessage = { id: `${incognito ? "incognito-user" : "pending-user"}-${Date.now()}`, role: "user", text: msg, createdAt: now, pinned: false, attachments: [] };
     const pa: ChatMessage = { id: `pending-assistant-${Date.now()}`, role: "assistant", text: "Thinking…", createdAt: now, pinned: false, attachments: [] };
     pendingTextRef.current[pa.id] = pa.text;
@@ -1635,7 +1697,8 @@ export default function App() {
                 <div className="empty-state"><MessageSquare size={26} className="empty-icon" /><p>No chat open</p><span>Press + to start</span></div>
               ) : (
                 <>
-                  <div ref={messageListRef} className="message-list" data-chat-ctx={activeChat.id} onContextMenu={e => { if (e.target instanceof HTMLElement && e.target.closest("button,input,textarea,select,a")) return; openCtxMenu(e, activeChat.id); }}>
+                  <div className={`chat-layout-inner ${showWorkspacePanel && activeChat.settings.contextFolderPath ? "has-workspace" : ""}`} style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+                    <div ref={messageListRef} className="message-list" data-chat-ctx={activeChat.id} style={{ flex: 1, minWidth: 0 }} onContextMenu={e => { if (e.target instanceof HTMLElement && e.target.closest("button,input,textarea,select,a")) return; openCtxMenu(e, activeChat.id); }}>
                     {activeMessages.length === 0 ? (
                       <div className="empty-state">
                         <MessageSquare size={24} className="empty-icon" />
@@ -1661,6 +1724,9 @@ export default function App() {
                           {m.id.startsWith("pending-assistant") && <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>}
                           {m.attachments.length > 0 && <div className="attachment-row">{m.attachments.map(a => <MessageAttachmentPreview key={a.id} asset={a} />)}</div>}
                           {!transient && <div className="msg-actions">
+                            {m.text.includes("<tool_call>") && (
+                              <button className="msg-action-btn" style={{ color: "var(--accent)" }} type="button" onClick={() => void handleApplyTools(activeChat.id, m.id)}><CheckCircle size={11} />Apply Changes</button>
+                            )}
                             <button className="msg-action-btn" type="button" onClick={() => void run(() => backend.togglePinnedMessage(activeChat.id, m.id))}><Pin size={11} />{m.pinned ? "Unpin" : "Pin"}</button>
                             <button className="msg-action-btn" type="button" onClick={() => setDialog({ type: "edit-msg", chatId: activeChat.id, targetId: m.id, title: "Edit message", value: m.text })}>Edit</button>
                             <button className="msg-action-btn danger" type="button" onClick={() => void run(() => backend.deleteMessage(activeChat.id, m.id))}><Trash2 size={11} /></button>
@@ -1669,6 +1735,14 @@ export default function App() {
                       </article>
                     );})}
                     <div ref={endRef} />
+                  </div>
+
+                  {showWorkspacePanel && activeChat.settings.contextFolderPath && (
+                    <WorkspacePanel 
+                      folderPath={activeChat.settings.contextFolderPath}
+                      onClose={() => setShowWorkspacePanel(false)}
+                    />
+                  )}
                   </div>
 
                   <div className="composer">
@@ -1686,6 +1760,7 @@ export default function App() {
                         <label className="toolbar-btn" title="Image"><Image size={14} /><input hidden type="file" accept="image/*" onChange={e => void attach(e, "image")} /></label>
                         <label className="toolbar-btn" title="Video"><Film size={14} /><input hidden type="file" accept="video/*" onChange={e => void attach(e, "video")} /></label>
                         <label className="toolbar-btn" title="File"><Paperclip size={14} /><input hidden type="file" onChange={e => void attach(e, "file")} /></label>
+                        <button className="toolbar-btn" type="button" title="Attach Folder" onClick={attachFolder}><FolderInput size={14} /></button>
                         <button className={`toolbar-btn${showGen ? " active" : ""}`} type="button" disabled={incognito} onClick={() => setShowGen(v => !v)}><Sparkles size={14} /></button>
                       </div>
                       <div className="composer-toolbar-right">

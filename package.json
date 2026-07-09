@@ -2,7 +2,7 @@
   "name": "ai-chat",
   "private": true,
   "version": "1.0.1",
-  "license": "GPL-3.0-only",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/Kivitas/ai-chat.git"
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.47",
     "lucide-react": "^1.16.0",

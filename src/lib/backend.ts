@@ -13,10 +13,12 @@ import type {
   ChatMessage,
   ChatSettingsUpdatePayload,
   DiagnosticsReport,
+  FolderContext,
   MediaPromptPreview,
   SettingsUpdatePayload,
   SetupPayload,
 } from "../types";
+
 
 export const backend = {
   // ── App state ─────────────────────────────────────────────────────────────
@@ -138,7 +140,29 @@ export const backend = {
     return invoke("create_backup");
   },
 
+  // ── Folder context ────────────────────────────────────────────────────────
+  /** Set the workspace folder path for a chat (saved per-chat persistently). */
+  setChatFolder(chatId: string, folderPath: string): Promise<AppSnapshot> {
+    return invoke("set_chat_folder", { chatId, folderPath });
+  },
+
+  /** Remove the workspace folder from a chat. */
+  clearChatFolder(chatId: string): Promise<AppSnapshot> {
+    return invoke("clear_chat_folder", { chatId });
+  },
+
+  /** Scan a folder and return its file tree + contents for the workspace panel. */
+  readChatFolder(folderPath: string): Promise<FolderContext> {
+    return invoke("read_chat_folder", { folderPath });
+  },
+
+  /** Apply tool calls embedded in an assistant message to the workspace folder. */
+  applyChatTools(chatId: string, messageId: string): Promise<AppSnapshot> {
+    return invoke("apply_chat_tools", { chatId, messageId });
+  },
+
   // ── Asset URLs ────────────────────────────────────────────────────────────
+
   /**
    * Convert a filesystem path from the Rust backend into a URL the
    * Tauri WebView can load. Uses Tauri's convertFileSrc for security.

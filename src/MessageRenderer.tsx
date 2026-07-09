@@ -15,26 +15,43 @@ interface Props {
 // LLMs sometimes emit \[...\], \(...\), or ```latex blocks.
 // This converts all of them to $$...$$ and $...$ which remark-math handles.
 function normaliseLatex(raw: string): string {
-  return raw
-    // Some local runtimes double-escape environment delimiters.
-    .replace(/\\\\(begin|end)\{/g, "\\$1{")
-    // KaTeX expects aligned/gathered inside display math, not top-level align/gather.
-    .replace(/\\begin\{align\*?\}/g, "\\begin{aligned}")
-    .replace(/\\end\{align\*?\}/g, "\\end{aligned}")
-    .replace(/\\begin\{gather\*?\}/g, "\\begin{gathered}")
-    .replace(/\\end\{gather\*?\}/g, "\\end{gathered}")
-    .replace(/\\begin\{equation\*?\}([\s\S]*?)\\end\{equation\*?\}/g, (_m, math) => `\n\n$$\n${String(math).trim()}\n$$\n\n`)
-    // ```latex ... ``` or ```math ... ``` -> display block
-    .replace(/```(?:latex|math)\s*([\s\S]*?)```/gi, (_m, math) => `\n\n$$\n${math.trim()}\n$$\n\n`)
-    // \[...\] -> display block
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_m, math) => `\n\n$$\n${math.trim()}\n$$\n\n`)
-    // \(...\) -> inline
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_m, math) => `$${String(math).trim()}$`)
-    // \begin{equation}...\end{equation} and similar environments -> display block
-    .replace(
-      /(^|[^$])\\begin\{(aligned|alignedat|gathered|multline\*?|split|cases|array|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix)\}([\s\S]*?)\\end\{\2\}/g,
-      (_m, prefix, env, math) => `${prefix}\n\n$$\n\\begin{${env}}${math}\\end{${env}}\n$$\n\n`,
-    );
+  return (
+    raw
+      // Some local runtimes double-escape environment delimiters.
+      .replace(/\\\\(begin|end)\{/g, "\\$1{")
+      // KaTeX expects aligned/gathered inside display math, not top-level align/gather.
+      .replace(/\\begin\{align\*?\}/g, "\\begin{aligned}")
+      .replace(/\\end\{align\*?\}/g, "\\end{aligned}")
+      .replace(/\\begin\{gather\*?\}/g, "\\begin{gathered}")
+      .replace(/\\end\{gather\*?\}/g, "\\end{gathered}")
+      .replace(
+        /\\begin\{equation\*?\}([\s\S]*?)\\end\{equation\*?\}/g,
+        (_m, math) => `\n\n$$\n${String(math).trim()}\n$$\n\n`,
+      )
+      // ```latex ... ``` or ```math ... ``` -> display block
+      .replace(
+        /```(?:latex|math)\s*([\s\S]*?)```/gi,
+        (_m, math) => `\n\n$$\n${math.trim()}\n$$\n\n`,
+      )
+      // \[...\] -> display block (including multi-line)
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_m, math) => `\n\n$$\n${math.trim()}\n$$\n\n`)
+      // \(...\) -> inline (including multi-line)
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_m, math) => `$${String(math).trim()}$`)
+      // \begin{equation}...  and similar environments -> display block
+      .replace(
+        /(^|[^$])\\begin\{(aligned|alignedat|gathered|multline\*?|split|cases|array|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix)\}([\s\S]*?)\\end\{\2\}/g,
+        (_m, prefix, env, math) =>
+          `${prefix}\n\n$$\n\\begin{${env}}${math}\\end{${env}}\n$$\n\n`,
+      )
+      // <math>...</math> MathML → display block
+      .replace(/<math[^>]*>([\s\S]*?)<\/math>/gi, (_m, math) => `\n\n$$\n${math.trim()}\n$$\n\n`)
+  );
+}
+
+// ── Strip <tool_call> blocks from visible text ────────────────────────────────
+// These are rendered separately as tool-result cards in App.tsx
+function stripToolCalls(text: string): string {
+  return text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "").trim();
 }
 
 // ── Copy button with "Copied!" feedback ──────────────────────────────────────
@@ -56,9 +73,6 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ── Syntax-highlight using highlight.js on the client ────────────────────────
-// We do NOT use rehype-highlight (it adds large overhead and can clash with
-// rehype-katex). Instead we apply hljs manually after parsing, which is fast
-// and gives us full control over the code-block chrome.
 let hljs: typeof import("highlight.js").default | null = null;
 let hljsStyleInjected = false;
 const HIGHLIGHT_LANGUAGES = [
@@ -75,7 +89,6 @@ async function loadHljs() {
   if (!hljsStyleInjected) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    // Dark GitHub theme matches the code block background (#0d1117)
     link.href = new URL(
       "highlight.js/styles/github-dark.css",
       import.meta.url,
@@ -166,15 +179,26 @@ const markdownComponents: Components = {
   },
 };
 
+// ── KaTeX rehype options ──────────────────────────────────────────────────────
+const katexOptions = {
+  throwOnError: false,       // never crash on bad LaTeX — show a red error inline
+  colorIsTextColor: true,    // let KaTeX inherit CSS text colour natively
+  trust: false,
+  strict: "ignore" as const,
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 export const MessageRenderer = memo(function MessageRenderer({ text, role }: Props) {
-  const processed = normaliseLatex(text);
+  // Strip any remaining <tool_call> blocks (backend should have cleaned these,
+  // but guard client-side as well for streaming partial content)
+  const withoutToolCalls = stripToolCalls(text);
+  const processed = normaliseLatex(withoutToolCalls);
 
   return (
     <div className={`msg-rendered msg-rendered-${role}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[[rehypeKatex, katexOptions]]}
         components={markdownComponents}
       >
         {processed}

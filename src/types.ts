@@ -158,6 +158,36 @@ export interface ChatSettings {
   aiInstructions?: string | null;
   userAvatar?: string | null;
   aiAvatar?: string | null;
+  /** Absolute path to an attached workspace folder for this chat. */
+  contextFolderPath?: string | null;
+}
+
+// ── Folder context types ──────────────────────────────────────────────────────
+
+export interface FolderFile {
+  relPath: string;
+  absPath: string;
+  sizeBytes: number;
+  isText: boolean;
+  content?: string | null;
+}
+
+export interface FolderContext {
+  root: string;
+  files: FolderFile[];
+  totalFiles: number;
+  skippedFiles: number;
+  truncated: boolean;
+}
+
+// ── Agentic tool-call result ──────────────────────────────────────────────────
+
+export interface ToolCallResult {
+  action: string;
+  path: string;
+  success: boolean;
+  message: string;
+  content?: string | null;
 }
 
 export interface ChatRecord {
@@ -275,4 +305,5 @@ export interface ChatSettingsUpdatePayload {
   aiAvatarBase64?: string | null;
   userAvatarPath?: string | null;
   aiAvatarPath?: string | null;
+  contextFolderPath?: string | null;
 }

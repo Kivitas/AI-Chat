@@ -215,6 +215,51 @@ pub struct ChatSettings {
     pub ai_instructions: Option<String>,
     pub user_avatar: Option<String>,
     pub ai_avatar: Option<String>,
+    /// Absolute path to a folder the user imported as workspace context for this chat.
+    #[serde(default)]
+    pub context_folder_path: Option<String>,
+}
+
+// ── Folder context types ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderFile {
+    pub rel_path: String,
+    pub abs_path: String,
+    pub size_bytes: u64,
+    pub is_text: bool,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderContext {
+    pub root: String,
+    pub files: Vec<FolderFile>,
+    pub total_files: usize,
+    pub skipped_files: usize,
+    pub truncated: bool,
+}
+
+// ── Agentic tool-call types ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCall {
+    pub action: String,
+    pub path: String,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallResult {
+    pub action: String,
+    pub path: String,
+    pub success: bool,
+    pub message: String,
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -353,4 +398,5 @@ pub struct ChatSettingsUpdatePayload {
     pub ai_avatar_base64: Option<String>,
     pub user_avatar_path: Option<String>,
     pub ai_avatar_path: Option<String>,
+    pub context_folder_path: Option<String>,
 }
