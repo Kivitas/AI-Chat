@@ -161,6 +161,11 @@ export const backend = {
     return invoke("apply_chat_tools", { chatId, messageId });
   },
 
+  /** Continue generating the next assistant message without adding a new user prompt. */
+  continueChat(chatId: string): Promise<AppSnapshot> {
+    return invoke("continue_chat", { chatId });
+  },
+
   // ── Asset URLs ────────────────────────────────────────────────────────────
 
   /**

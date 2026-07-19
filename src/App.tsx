@@ -1,6 +1,6 @@
 import {
   Archive, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, KeyRound,
-  FileUp, Film, Image, Lock, MessageSquare, FolderInput,
+  FileUp, Film, Image, Lock, MessageSquare, FolderInput, FolderOpen,
   Moon, Palette, PanelLeftClose, Paperclip,
   Pin, Plus, RefreshCw, Search, Send, Settings,
   ShieldOff, Sliders, Sparkles, Star, Sun,
@@ -1297,6 +1297,31 @@ export default function App() {
     try {
       setSnap(await backend.applyChatTools(chatId, messageId));
       setToast("Tools applied successfully");
+      
+      // Autonomous SWE-agent continuation loop (clean)
+      setTimeout(() => {
+        setGenerating(g => ({ ...g, [chatId]: true }));
+        const pa: ChatMessage = { id: `pending-assistant-${Date.now()}`, role: "assistant", text: "Thinking…", createdAt: new Date().toISOString(), pinned: false, attachments: [] };
+        pendingTextRef.current[pa.id] = pa.text;
+        if (incognito) {
+          setIncognitoMessages(prev => ({ ...prev, [chatId]: [...(prev[chatId] ?? []), pa] }));
+        } else {
+          setSnap(prev => prev ? ({
+            ...prev, chats: prev.chats.map(c => c.id === chatId ? { ...c, messages: [...c.messages, pa] } : c)
+          }) : prev);
+        }
+
+        backend.continueChat(chatId)
+          .then(newSnap => {
+            if (!incognito) setSnap(newSnap);
+            setGenerating(g => ({ ...g, [chatId]: false }));
+            scrollToBottom("auto");
+          })
+          .catch(err => {
+            setToast("Failed to continue chat: " + String(err));
+            setGenerating(g => ({ ...g, [chatId]: false }));
+          });
+      }, 200);
     } catch (e) {
       setToast(err(e, "Failed to apply tools"));
     } finally {
@@ -1697,7 +1722,7 @@ export default function App() {
                 <div className="empty-state"><MessageSquare size={26} className="empty-icon" /><p>No chat open</p><span>Press + to start</span></div>
               ) : (
                 <>
-                  <div className={`chat-layout-inner ${showWorkspacePanel && activeChat.settings.contextFolderPath ? "has-workspace" : ""}`} style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+                  <div className={`chat-layout-inner ${showWorkspacePanel && (activeChat.settings.contextFolderPath || snap.config.paths.workspacePath) ? "has-workspace" : ""}`} style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
                     <div ref={messageListRef} className="message-list" data-chat-ctx={activeChat.id} style={{ flex: 1, minWidth: 0 }} onContextMenu={e => { if (e.target instanceof HTMLElement && e.target.closest("button,input,textarea,select,a")) return; openCtxMenu(e, activeChat.id); }}>
                     {activeMessages.length === 0 ? (
                       <div className="empty-state">
@@ -1737,9 +1762,9 @@ export default function App() {
                     <div ref={endRef} />
                   </div>
 
-                  {showWorkspacePanel && activeChat.settings.contextFolderPath && (
+                  {showWorkspacePanel && (activeChat.settings.contextFolderPath || snap.config.paths.workspacePath) && (
                     <WorkspacePanel 
-                      folderPath={activeChat.settings.contextFolderPath}
+                      folderPath={activeChat.settings.contextFolderPath || snap.config.paths.workspacePath!}
                       onClose={() => setShowWorkspacePanel(false)}
                     />
                   )}
@@ -1761,6 +1786,9 @@ export default function App() {
                         <label className="toolbar-btn" title="Video"><Film size={14} /><input hidden type="file" accept="video/*" onChange={e => void attach(e, "video")} /></label>
                         <label className="toolbar-btn" title="File"><Paperclip size={14} /><input hidden type="file" onChange={e => void attach(e, "file")} /></label>
                         <button className="toolbar-btn" type="button" title="Attach Folder" onClick={attachFolder}><FolderInput size={14} /></button>
+                        {(activeChat.settings.contextFolderPath || snap.config.paths.workspacePath) && (
+                          <button className={`toolbar-btn${showWorkspacePanel ? " active" : ""}`} type="button" title="Toggle Workspace Panel" onClick={() => setShowWorkspacePanel(v => !v)}><FolderOpen size={14} /></button>
+                        )}
                         <button className={`toolbar-btn${showGen ? " active" : ""}`} type="button" disabled={incognito} onClick={() => setShowGen(v => !v)}><Sparkles size={14} /></button>
                       </div>
                       <div className="composer-toolbar-right">
@@ -1925,7 +1953,25 @@ export default function App() {
                 )}
               </Collapsible>
               <Collapsible title="Paths" icon={<FileUp size={14} />} open={false}>
-                <div className="two-col">{Object.entries(pathsDraft)
+                <div className="field" style={{ marginBottom: "1rem" }}>
+                  <span>Global Workspace</span>
+                  <div className="flex-row">
+                    <input type="text" readOnly placeholder="No workspace selected" value={pathsDraft?.workspacePath ?? ""} style={{ flex: 1 }} />
+                    <button type="button" className="secondary-button" onClick={async () => {
+                      try {
+                        const selected = await open({ directory: true, multiple: false, title: "Select Global Workspace" });
+                        if (selected && typeof selected === "string") {
+                          setPathsDraft(p => p ? { ...p, workspacePath: selected } : p);
+                        }
+                      } catch (e) { console.error(e); }
+                    }}>Browse...</button>
+                    {pathsDraft?.workspacePath && (
+                      <button type="button" className="secondary-button" onClick={() => setPathsDraft(p => p ? { ...p, workspacePath: null } : p)}>Clear</button>
+                    )}
+                  </div>
+                  <p className="compact-note">Provides models persistent access to this folder across all chats.</p>
+                </div>
+                <div className="two-col">{Object.entries(pathsDraft || {})
                   .filter(([k]) => technicalMode || ["appRoot", "dataDir", "modelsDir", "imageModelsDir", "videoModelsDir", "runtimesDir", "backupsDir"].includes(k))
                   .map(([k, v]) => <label key={k} className="field"><span>{k}</span><input value={v} onChange={e => setPathsDraft(p => p ? { ...p, [k]: e.target.value } : p)} /></label>)}</div>
                 {!technicalMode && <p className="compact-note">Enable Geek mode to edit every internal directory.</p>}

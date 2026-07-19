@@ -26,6 +26,7 @@ export interface PathConfig {
   profilesDir: string;
   presetsDir: string;
   backupsDir: string;
+  workspacePath?: string | null;
   logsDir: string;
   runtimesDir: string;
 }

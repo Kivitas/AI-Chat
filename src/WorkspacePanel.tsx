@@ -109,13 +109,17 @@ export function WorkspacePanel({ folderPath, onClose }: Props) {
   const [selectedFile, setSelectedFile] = useState<FolderFile | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    backend
-      .readChatFolder(folderPath)
-      .then(setCtx)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+    let active = true;
+    const t = setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      backend
+        .readChatFolder(folderPath)
+        .then((res) => { if (active) setCtx(res); })
+        .catch((e) => { if (active) setError(String(e)); })
+        .finally(() => { if (active) setLoading(false); });
+    }, 0);
+    return () => { active = false; clearTimeout(t); };
   }, [folderPath]);
 
   const folderName = folderPath.split(/[/\\]/).filter(Boolean).pop() ?? folderPath;

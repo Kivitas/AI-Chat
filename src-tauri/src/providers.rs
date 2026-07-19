@@ -53,10 +53,10 @@ impl ProviderKind {
 
     pub fn default_model(self) -> &'static str {
         match self {
-            ProviderKind::OpenAI => "gpt-4.1",
+            ProviderKind::OpenAI => "gpt-4o",
             ProviderKind::OpenRouter => "openrouter/auto",
             ProviderKind::Gemini => "gemini-2.5-flash",
-            ProviderKind::Claude => "claude-sonnet-4-20250514",
+            ProviderKind::Claude => "claude-3-5-sonnet-latest",
             ProviderKind::Mistral => "mistral-large-latest",
         }
     }

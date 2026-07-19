@@ -274,6 +274,7 @@ fn default_chat_settings() -> ChatSettings {
         ),
         user_avatar: None,
         ai_avatar: None,
+        context_folder_path: None,
     }
 }
 
@@ -643,6 +644,7 @@ fn build_chat_prompt_parts(
     active_chat: Option<&ChatRecord>,
     character: Option<&CharacterRecord>,
     user_text: &str,
+    global_workspace: Option<&str>,
 ) -> ChatPromptParts {
     let chat_ai_name = active_chat
         .and_then(|chat| chat.settings.ai_name.as_deref())
@@ -705,14 +707,15 @@ fn build_chat_prompt_parts(
 
     // Folder workspace context
     let folder_path_opt = active_chat
-        .and_then(|chat| chat.settings.context_folder_path.as_deref());
+        .and_then(|chat| chat.settings.context_folder_path.as_deref())
+        .or(global_workspace);
     let folder_context_text = folder_path_opt
-        .map(|fp| folder_context_for_prompt(fp))
+        .map(folder_context_for_prompt)
         .unwrap_or_default();
 
     // Agentic tool-call instructions (only when a folder is attached)
     let agentic_instructions = if folder_path_opt.is_some() {
-        "\n\nAgentic file editing:\nYou may create, edit, or delete files in the workspace folder by emitting \`<tool_call>\` blocks AFTER your response text. Supported actions: write_file, create_file, edit_file, delete_file, read_file.\nFormat:\n<tool_call>\n  <action>write_file</action>\n  <path>relative/path/to/file.ext</path>\n  <content>\nfull file content here\n  </content>\n</tool_call>\nPaths must be relative to the workspace root. Absolute paths and path traversal (../) are rejected. Only emit tool calls when the user explicitly asks you to create or modify files. Always explain what you are doing before the tool call block."
+        "\n\nAgentic file editing & execution:\nYou may create, edit, delete files, and run shell commands in the workspace folder by emitting `<tool_call>` blocks AFTER your response text. Supported actions: write_file, create_file, edit_file, delete_file, read_file, run_command.\nFormat for files:\n<tool_call>\n  <action>write_file</action>\n  <path>relative/path/to/file.ext</path>\n  <content>\nfull file content here\n  </content>\n</tool_call>\nFormat for commands:\n<tool_call>\n  <action>run_command</action>\n  <path>.</path>\n  <content>\nnpm run build\n  </content>\n</tool_call>\nPaths must be relative to the workspace root. Absolute paths and path traversal (../) are rejected. Only emit tool calls when the user explicitly asks you to create or modify files or run commands. Always explain what you are doing before the tool call block."
     } else {
         ""
     };
@@ -910,7 +913,7 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ToolCall>) {
     let mut cleaned = response.to_string();
 
     // Find all <tool_call>...</tool_call> blocks
-    let mut search_from = 0;
+    let search_from = 0;
     while let Some(start) = cleaned[search_from..].find("<tool_call>") {
         let abs_start = search_from + start;
         if let Some(rel_end) = cleaned[abs_start..].find("</tool_call>") {
@@ -922,12 +925,27 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ToolCall>) {
             let path = extract_xml_tag(block, "path").unwrap_or_default();
             let content = extract_xml_tag(block, "content");
 
-            if !action.is_empty() && !path.is_empty() {
+            if !action.is_empty() {
                 calls.push(ToolCall { action, path, content });
             }
 
-            // Mark block for removal
-            cleaned.replace_range(abs_start..abs_end, "");
+            // Expand abs_start backwards to eat ```xml if it's there
+            let before = &cleaned[..abs_start];
+            let mut remove_start = abs_start;
+            if before.trim_end().ends_with("```xml") {
+                if let Some(idx) = before.rfind("```xml") { remove_start = idx; }
+            } else if before.trim_end().ends_with("```") {
+                if let Some(idx) = before.rfind("```") { remove_start = idx; }
+            }
+
+            // Expand abs_end forwards to eat ``` if it's there
+            let after = &cleaned[abs_end..];
+            let mut remove_end = abs_end;
+            if after.trim_start().starts_with("```") {
+                if let Some(idx) = after.find("```") { remove_end = abs_end + idx + 3; }
+            }
+
+            cleaned.replace_range(remove_start..remove_end, "");
             // Don't advance search_from — the string shrank
         } else {
             break;
@@ -1037,6 +1055,55 @@ fn execute_tool_calls(folder_root: &Path, calls: &[ToolCall]) -> Vec<ToolCallRes
                         message: format!("Read failed: {e}"),
                         content: None,
                     },
+                }
+            }
+            "run_command" => {
+                let cmd = call.content.as_deref().unwrap_or("");
+                #[cfg(target_os = "windows")]
+                let mut process = Command::new("cmd");
+                #[cfg(target_os = "windows")]
+                process.args(["/C", cmd]);
+
+                #[cfg(not(target_os = "windows"))]
+                let mut process = Command::new("sh");
+                #[cfg(not(target_os = "windows"))]
+                process.args(["-c", cmd]);
+
+                process.current_dir(&resolved);
+
+                match process.output() {
+                    Ok(output) => {
+                        let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        if stdout.len() > 2000 {
+                            stdout = format!("{}... (truncated)", &stdout[..2000]);
+                        }
+                        if stderr.len() > 2000 {
+                            stderr = format!("{}... (truncated)", &stderr[..2000]);
+                        }
+                        let success = output.status.success();
+                        let mut msg = format!("Command executed with status: {}", output.status);
+                        if !stdout.is_empty() {
+                            msg.push_str(&format!("\n\nStdout:\n```\n{}\n```", stdout));
+                        }
+                        if !stderr.is_empty() {
+                            msg.push_str(&format!("\n\nStderr:\n```\n{}\n```", stderr));
+                        }
+                        ToolCallResult {
+                            action: call.action.clone(),
+                            path: call.path.clone(),
+                            success,
+                            message: msg.clone(),
+                            content: Some(msg),
+                        }
+                    }
+                    Err(e) => ToolCallResult {
+                        action: call.action.clone(),
+                        path: call.path.clone(),
+                        success: false,
+                        message: format!("Command execution failed: {e}"),
+                        content: None,
+                    }
                 }
             }
             other => ToolCallResult {
@@ -1395,7 +1462,7 @@ fn run_llama_cli_runtime(
         let logical_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(8);
-        let physical_estimate = (logical_cores + 1) / 2; // round-up integer div
+        let physical_estimate = logical_cores.div_ceil(2); // round-up integer div
         (physical_estimate.max(2) as u32).min(32)
     };
     // Batch size: 256 tokens * threads is a good default; keep in 256-2048.
@@ -1497,7 +1564,7 @@ fn run_llama_cli_runtime(
 
     let stderr_handle = thread::spawn(move || {
         let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).map(|_| buf)
+        std::io::Read::read_to_end(&mut stderr, &mut buf).map(|_| buf)
     });
 
     // Dynamic timeout: allow 10 s per 1 K context tokens, min 120 s, max 3 600 s (1 h).
@@ -1964,7 +2031,7 @@ async fn generate_assistant_text(
         })
         .unwrap_or_default();
     let selected_model = resolve_chat_model(&snapshot, active_chat.as_ref()).cloned();
-    let prompt = build_chat_prompt_parts(active_chat.as_ref(), character.as_ref(), &text);
+    let prompt = build_chat_prompt_parts(active_chat.as_ref(), character.as_ref(), &text, snapshot.config.paths.workspace_path.as_deref());
     let worker_storage = AppStorage::new(storage.resolved.clone());
     let worker_storage_for_blocking = AppStorage::new(storage.resolved.clone());
     let prompt_system_prompt = prompt.system_prompt.clone();
@@ -2241,6 +2308,86 @@ async fn send_chat_message(
         character,
         chat_id.clone(),
         text,
+        provider_secrets,
+    )
+    .await;
+
+    persist_chat_update(&app, &session_for_write, &chat_id, |chat| {
+        chat.messages.push(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            role: "assistant".to_string(),
+            text: assistant_text,
+            created_at: Utc::now().to_rfc3339(),
+            pinned: false,
+            attachments: Vec::new(),
+        });
+        chat.updated_at = Utc::now().to_rfc3339();
+    })
+    .map_err(|error| error.to_string())?;
+
+    let current_active_chat_id = {
+        if let Ok(guard) = session(&state) {
+            guard.active_chat_id.clone()
+        } else {
+            session_for_write.active_chat_id.clone()
+        }
+    };
+    let mut final_session = session_for_write;
+    final_session.active_chat_id = current_active_chat_id;
+    read_snapshot(&app, &final_session).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn continue_chat(
+    app: AppHandle,
+    state: State<'_, AppSession>,
+    chat_id: String,
+) -> Result<AppSnapshot, String> {
+    let (master_key, username, active_chat_id) = {
+        let guard = require_unlocked(&state).map_err(|error| error.to_string())?;
+        (
+            guard
+                .master_key
+                .clone()
+                .ok_or_else(|| "App is locked".to_string())?,
+            guard
+                .username
+                .clone()
+                .ok_or_else(|| "No active account".to_string())?,
+            guard.active_chat_id.clone(),
+        )
+    };
+    let session_for_read = SessionState {
+        master_key: Some(master_key.clone()),
+        username: Some(username.clone()),
+        active_chat_id: active_chat_id.clone(),
+    };
+    let (_, storage) = app_storage(&app).map_err(|error| error.to_string())?;
+    let snapshot = read_snapshot(&app, &session_for_read).map_err(|error| error.to_string())?;
+    let character = snapshot.character.clone();
+    let active_chat = snapshot
+        .chats
+        .iter()
+        .find(|chat| chat.id == chat_id)
+        .cloned();
+    let provider_secrets = storage
+        .load_provider_secrets(&username, &master_key)
+        .map_err(|error| error.to_string())?;
+
+    let session_for_write = SessionState {
+        master_key: Some(master_key),
+        username: Some(username),
+        active_chat_id,
+    };
+
+    let assistant_text = generate_assistant_text(
+        app.clone(),
+        storage,
+        snapshot,
+        active_chat,
+        character,
+        chat_id.clone(),
+        "Tools executed successfully. Please read the output in the recent conversation and proceed with the next step of your task. If the output shows a failure, try to fix it.".to_string(),
         provider_secrets,
     )
     .await;
@@ -2550,7 +2697,7 @@ fn apply_chat_tools(
         .find(|m| m.id == message_id)
         .ok_or_else(|| "Message not found".to_string())?;
 
-    let folder_root_opt = active_chat.settings.context_folder_path.clone();
+    let folder_root_opt = active_chat.settings.context_folder_path.clone().or_else(|| snapshot.config.paths.workspace_path.clone());
     
     let (_, tool_calls) = parse_tool_calls(&message.text);
     if tool_calls.is_empty() {
@@ -2576,6 +2723,7 @@ fn apply_chat_tools(
                 "write_file" | "create_file" | "edit_file" => "Wrote",
                 "delete_file" => "Deleted",
                 "read_file" => "Read",
+                "run_command" => "Ran command in",
                 other => other,
             };
             format!("{icon} **{action_label}** `{}` — {}", r.path, r.message)
@@ -3637,7 +3785,8 @@ pub fn run() {
             set_chat_folder,
             clear_chat_folder,
             read_chat_folder,
-            apply_chat_tools
+            apply_chat_tools,
+            continue_chat
         ])
 
         .run(tauri::generate_context!())

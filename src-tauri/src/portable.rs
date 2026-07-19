@@ -59,6 +59,7 @@ impl ResolvedPaths {
             backups_dir: self.backups_dir.to_string_lossy().to_string(),
             logs_dir: self.logs_dir.to_string_lossy().to_string(),
             runtimes_dir: self.runtimes_dir.to_string_lossy().to_string(),
+            workspace_path: None,
         }
     }
 
@@ -112,6 +113,7 @@ pub fn default_config() -> AppConfig {
             backups_dir: "${DATA_DIR}/Backups".to_string(),
             logs_dir: "${DATA_DIR}/Logs".to_string(),
             runtimes_dir: "${APP_ROOT}/Runtimes".to_string(),
+            workspace_path: None,
         },
         limits: LimitsConfig {
             max_repo_file_size_mb: 100,

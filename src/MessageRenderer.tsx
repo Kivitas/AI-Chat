@@ -51,7 +51,27 @@ function normaliseLatex(raw: string): string {
 // ── Strip <tool_call> blocks from visible text ────────────────────────────────
 // These are rendered separately as tool-result cards in App.tsx
 function stripToolCalls(text: string): string {
-  return text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "").trim();
+  let cleaned = text
+    .replace(/```xml\s*<tool_call>[\s\S]*?<\/tool_call>\s*```/gi, "")
+    .replace(/```\s*<tool_call>[\s\S]*?<\/tool_call>\s*```/gi, "")
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+
+  // Hide incomplete tool calls at the end of the text during streaming
+  const incompleteIndex = cleaned.lastIndexOf("<tool_call>");
+  if (incompleteIndex !== -1) {
+    if (cleaned.indexOf("</tool_call>", incompleteIndex) === -1) {
+      let stripStart = incompleteIndex;
+      const before = cleaned.slice(0, incompleteIndex);
+      if (before.trimEnd().endsWith("```xml")) {
+        stripStart = before.lastIndexOf("```xml");
+      } else if (before.trimEnd().endsWith("```")) {
+        stripStart = before.lastIndexOf("```");
+      }
+      cleaned = cleaned.slice(0, stripStart);
+    }
+  }
+
+  return cleaned.trim();
 }
 
 // ── Copy button with "Copied!" feedback ──────────────────────────────────────

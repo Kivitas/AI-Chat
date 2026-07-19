@@ -559,6 +559,7 @@ impl AppStorage {
                 ),
                 user_avatar: None,
                 ai_avatar: None,
+                context_folder_path: None,
             },
             messages: Vec::new(),
         };

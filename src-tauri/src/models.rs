@@ -20,6 +20,8 @@ pub struct PathConfig {
     pub backups_dir: String,
     pub logs_dir: String,
     pub runtimes_dir: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
